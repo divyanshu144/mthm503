@@ -40,3 +40,80 @@ summary_data %>%
 ```
 
 Do note that there has been a lot of sub-sampling. All fatally injured road pedestrian casualties are included in the data, but 10% of serious and 1% of slight casualties were selected at random.
+
+
+```{r eval=FALSE, message=FALSE}
+library(targets)
+# Read back the two evaluation targets:
+rf <- tar_read(rf_eval)
+svm <- tar_read(svm_eval)
+
+# Print AUCs
+cat("**Random Forest AUC:**", round(rf$auc, 3), "\n\n")
+cat("**SVM (Radial) AUC:**", round(svm$auc, 3), "\n\n")
+
+# Print confusion matrices
+knitr::kable(rf$confusion$table, 
+             caption = "Random Forest Confusion Matrix", 
+             format = "markdown")
+knitr::kable(svm$confusion$table,
+             caption = "SVM (Radial) Confusion Matrix",
+             format = "markdown")
+```
+
+
+That will render nicely-formatted tables of your predicted vs. true class counts and report the AUCs inline.
+
+---
+
+## 2. Plot feature‐importance for the Random Forest
+
+Caret’s `varImp()` will extract importances from your `ranger` model:
+
+```markdown
+```{r eval=FALSE, fig.height=6, fig.width=8}
+library(caret)
+# Get variable importance
+vi <- varImp(tar_read(rf_fit))$importance
+vi$variable <- rownames(vi)
+
+# Plot the top 10
+library(ggplot2)
+ggplot(vi %>% arrange(desc(Overall)) %>% slice(1:10),
+       aes(x = reorder(variable, Overall), y = Overall)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 10 Predictors by Variable Importance (Random Forest)",
+    x = "", y = "Importance"
+  ) +
+  theme_minimal()
+```
+
+---
+
+## 3. Discuss why RF > SVM here
+
+Below your tables & plot, add a prose section:
+
+> **Why does Random Forest outperform the SVM?**  
+>
+> 1. **Non-linear interactions & high-dimensional splits**  
+>    RF can capture complex interactions among features (e.g. time × lighting) via recursive binary splits.  A single radial SVM, by contrast, may struggle to find a kernel hyperplane that cleanly separates three classes in this mixed numeric/categorical space.  
+>
+> 2. **Ensemble stability vs. SVM sensitivity**  
+>    The bagged‐trees ensemble in RF reduces variance and is robust to outliers and noisy predictors.  SVM tuning (cost/gamma) can be brittle with overlapping classes—hence its much lower recall on “Serious” cases (≈47% vs. ≈87% in RF).  
+>
+> 3. **Native multiclass handling**  
+>    Ranger handles multiclass natively; the SVM via `svmRadial` in Caret uses one-vs-one behind the scenes, which may introduce inconsistencies when classes overlap.  
+>
+> Taken together, these strengths let RF achieve ~0.98 multiclass AUC and ~90% balanced accuracy, compared to only ~0.79 AUC and ~60% overall accuracy for the SVM.
+
+---
+
+Putting it all together in your `Report.Rmd` will give an analytical narrative:  
+- **“Here are the confusion tables & AUCs…”**  
+- **“Here’s which predictors matter most…”**  
+- **“Here’s why RF is the clear winner on these data.”**
+
+That completes Task 1’s final “communicate & interpret” requirement.

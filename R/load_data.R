@@ -21,7 +21,7 @@ load_data <- function() {
   con <- get_db_connection()
 
   sql_text <- "
-    SELECT casualty_severity, sex_of_casualty
+    SELECT *
     FROM stats19_casualties
   "
   df <- DBI::dbGetQuery(con, sql_text)
@@ -29,3 +29,22 @@ load_data <- function() {
   DBI::dbDisconnect(con)
   df
 }
+
+
+# Read the full accidents table
+read_accidents <- function() {
+  con <- get_db_connection()
+  df  <- DBI::dbGetQuery(con, "SELECT * FROM stats19_accidents;")
+  DBI::dbDisconnect(con)
+  df
+}
+
+# Read the full vehicles table
+read_vehicles <- function() {
+  con <- get_db_connection()
+  df  <- DBI::dbGetQuery(con, "SELECT * FROM stats19_vehicles;")
+  DBI::dbDisconnect(con)
+  df
+}
+
+
