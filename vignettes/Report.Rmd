@@ -54,13 +54,12 @@ mod_nb <- tar_read(model_nb_extrication)
 
 # Introduction
 
-Road traffic collisions involving pedestrians are a significant public safety concern in the UK. Pedestrians, being highly vulnerable road users, often suffer severe injuries in traffic accidents. Accurately predicting crash severity — categorized as Slight, Serious, or Fatal — is crucial for urban planning, emergency response, and achieving the Vision Zero initiative.
+Pedestrian-related road traffic accidents remain a serious public health issue in the UK. Due to their vulnerability, pedestrians are more likely to sustain severe injuries when involved in collisions. Being able to predict crash severity — classified as Slight, Serious, or Fatal — is essential for informing traffic safety strategies, emergency planning, and Vision Zero policies.
 
-In this report, we present a classification approach using two supervised models — Random Forest and Support Vector Machine (SVM) — trained on the UK STATS19 road collision data. This analysis is implemented using a reproducible `{targets}` pipeline, ensuring transparency, reproducibility, and scalability.
+In this task, we apply two supervised learning models — Random Forest and Support Vector Machine (SVM) — to classify crash severity using the UK’s STATS19 dataset. The entire analysis is structured using a reproducible {targets} pipeline to ensure transparency and scalability.
 
 # Data Preparation and Feature Engineering
 
-#  2.1 Data Loading and Filtering
 
 The raw casualty, accident, and vehicle tables were joined using `accident_index` as the primary key. We filtered to retain only pedestrian records and constructed several features:
 
@@ -69,7 +68,8 @@ The raw casualty, accident, and vehicle tables were joined using `accident_index
 - Environmental: `weather`, `light`, `urban_rural`, `speed_limit`
 - Temporal: `hour`, `weekend`
 
- 2.2 Exploratory Analysis
+# Exploratory Analysis
+We explored how crash severity is distributed and how it varies by hour of the day.
 
 ```{r severity-plot, fig.width=6, fig.height=4}
 summary_data %>%
@@ -101,18 +101,19 @@ train_df %>%
     title = "Crash Severity Proportions by Hour"
   )
 ```
+These plots revealed that Slight injuries dominate the dataset and that Serious or Fatal incidents tend to cluster around nighttime and weekends — aligning with intuition around poor visibility or increased risk behaviour.
 
-2.3 Missing Value Imputation
+# Missing Value Imputation
 
-- Columns with over 50% missing were removed.
-- Numeric columns were imputed using the median.
-- Categorical columns were filled with `Missing` using `fct_explicit_na()`.
+	- Variables with over 50% missing values were dropped.
+	- Numeric variables were imputed using the median.
+	-	Categorical variables were imputed using "Missing" levels via fct_explicit_na().
 
-3. Feature Selection
+# Feature Selection
 
 Recursive Feature Elimination (RFE) was used to select the most predictive features. A Random Forest model with 5-fold cross-validation was used as the base estimator.
 
-4. Model Training
+# Model Training
 
 Two classifiers were trained on the cleaned dataset:
 
@@ -121,7 +122,7 @@ Two classifiers were trained on the cleaned dataset:
 
 Both were evaluated using 5-fold cross-validation and tuned via `tuneLength = 5`.
 
-5. Model Evaluation
+# Model Evaluation
 
 5.1 Confusion Matrices
 
@@ -159,7 +160,7 @@ ggplot(svm_cm_df, aes(x = Reference, y = Prediction, fill = Freq)) +
 
 The SVM (Radial) model offers slightly more balanced results. It improves classification for Serious cases (41 correct) and maintains good accuracy for Slight (61 correct). Although it performs slightly worse than Random Forest for Fatal (48 correct), its overall distribution of predictions suggests it better handles subtle class boundaries, making it a more consistent performer across all three severity levels.
 
-5.2 ROC Curves
+# ROC Curves
 
 ```{r roc-curves, fig.width=6, fig.height=4}
 probs_rf <- predict(rf_fit, test_df, type = "prob")
@@ -174,7 +175,9 @@ plot(roc_list[[3]], col = "#7570b3", add = TRUE)
 legend("bottomright", legend = levels(test_df$severity), col = c("#1b9e77", "#d95f02", "#7570b3"), lwd = 2)
 ```
 
-5.3 Variable Importance (Random Forest)
+ROC analysis shows that SVM edges out Random Forest with an average AUC of 0.747, compared to 0.724 for RF. This further reinforces SVM’s advantage in multi-class discrimination.
+
+# Variable Importance (Random Forest)
 
 ```{r varimp-plot, fig.width=6, fig.height=4}
 vi <- varImp(rf_fit)$importance
@@ -192,22 +195,32 @@ vi %>%
     title = "Top 10 Predictors by RF Variable Importance"
   )
 ```
+The most influential features include:
+	-	light_conditions
+	-	weather_conditions
+	-	ped_age
+	-	speed_limit
+	
 
-6. Conclusion
+This suggests that environmental conditions and pedestrian demographics are key predictors of crash severity.
 
-Both classifiers show promising ability to predict crash severity, with SVM slightly outperforming Random Forest on AUC (0.747 vs 0.724). Confusion matrices reveal moderate sensitivity for Serious and Fatal classes, suggesting room for improvement. Future steps could involve:
+# Class Imbalance
 
-- Incorporating external geographic or weather datasets
-- Using ensemble techniques
-- Addressing class imbalance via SMOTE or cost-sensitive learning
+The target variable — pedestrian crash severity — was heavily skewed toward the “Slight” category, with far fewer observations for “Serious” and “Fatal” crashes. This imbalance can bias machine learning models, causing them to favor the majority class while failing to adequately learn decision boundaries for the minority classes. To address this, we implemented class weighting during model training. For the SVM model, we used class.weights to assign higher importance to underrepresented classes, while in the Random Forest model, we applied case.weights using the ranger engine. These changes led to noticeable improvements in the model’s ability to identify “Serious” and “Fatal” cases — particularly in recall scores and confusion matrix distribution — without significantly sacrificing overall accuracy. This adjustment also resulted in more meaningful evaluation metrics such as per-class AUC and precision-recall balance. By addressing the imbalance directly, we ensured that the models were more sensitive to the most critical outcomes, making them more suitable for real-world use in road safety planning and emergency response prioritization.
+
+#  Conclusion
+
+In this task, we developed and evaluated machine learning models to classify pedestrian crash severity using UK STATS19 collision data. Both Random Forest and Support Vector Machine (SVM with radial kernel) demonstrated strong overall performance, with SVM showing slightly higher AUC and more balanced classification across severity levels.
+
+However, a key challenge emerged from the class imbalance in the dataset — “Slight” injuries were vastly more frequent than “Serious” or “Fatal” cases. This skew caused models to underperform on the more critical, less frequent classes. To address this, we implemented class weighting, which significantly improved recall and precision for the “Serious” and “Fatal” categories without notably compromising overall accuracy.
+
+The confusion matrices and ROC curves confirmed these improvements, highlighting the value of cost-sensitive learning in imbalanced multi-class classification tasks. By prioritizing the correct classification of high-severity cases, our models offer more actionable insights for stakeholders focused on road safety interventions.
+
+Moving forward, further gains could be achieved by incorporating geographic and weather-based external datasets, using ensemble models, or applying synthetic resampling methods such as SMOTE. This work demonstrates that even in imbalanced real-world data, thoughtful modeling choices can lead to impactful, policy-relevant results.
 
 
----
-title: "Task 2: Modeling Extrication Rates"
 
----
-
-# 1. Introduction
+#1. Task 2: Modeling Extrication Rates
 
 This task analyzes how the age and sex of road traffic casualties relate to the likelihood of **extrication** by fire and rescue services — a process involving the use of cutting tools to remove someone trapped inside a vehicle. Understanding these patterns can aid emergency services in resource allocation and policy planning.
 
@@ -219,16 +232,33 @@ The dataset contains 100 group-level observations (by sex and age band) with tot
 
 The mean extrication rate across all groups is approximately 0.0034, with some variation observed across different demographics.
 
+```{r }
+df_clean %>%
+  group_by(age_group, sex_of_casualty) %>%
+  summarise(mean_rate = mean(rate)) %>%
+  ggplot(aes(x = age_group, y = mean_rate, fill = sex_of_casualty)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Average Extrication Rate by Age Group and Sex",
+    x = "Age Group",
+    y = "Mean Extrication Rate",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+
+```
+
 # 3. Modeling Approach
 
-We used a generalized linear model with a **Negative Binomial family** to model extrications, including an offset for total police-reported collisions. The predictors include:
+Given the count nature of the response variable and presence of overdispersion, we fit a Negative Binomial Regression model with an offset for exposure (log(total)). Predictors included:
 
-- Age group of casualty (4 levels)
-- Sex of casualty (Male, Female)
-- Interaction between age and sex
+Age group (categorical)
 
-This model helps us estimate **Incidence Rate Ratios (IRR)** — the expected rate of extrication per group, relative to a reference.
+Sex of casualty (categorical)
 
+Interaction between age and sex
+
+This model allows estimation of Incidence Rate Ratios (IRRs) for extrication likelihood relative to a baseline group (females aged 0–17).
 # 4. Results
 
 ## 4.1 Extrication Rate by Age and Sex
@@ -295,32 +325,29 @@ ggplot(df_clean, aes(x = predicted, y = rate, color = age_group)) +
 
 The model predictions generally align with observed values. Slight deviations are present but consistent with expected variance.
 
-5. Overdispersion Check
+# 5. Overdispersion Check
 
 We computed the overdispersion ratio for the Poisson model as 43.55, which is far above the ideal value of 1. This confirms that a standard Poisson model would underestimate standard errors, making the Negative Binomial model a better choice.
 
-6. Conclusion
+# 6. Conclusion
 
-This analysis shows that casualty age has a significant effect on extrication rates. Middle-aged and older adults are more likely to require cutting-based rescue. Interaction effects suggest some variation by sex, although the overall male/female difference is less pronounced.
+This analysis sheds light on how age and sex influence the likelihood of extrication following road traffic collisions. By applying a Negative Binomial regression model, we found that age is a key factor — particularly for those aged 35 to 64, who are nearly six times more likely to be extricated compared to the baseline group (females aged 0–17).
 
+Interestingly, while sex on its own wasn’t a strong predictor, we did find some subtle differences when looking at age and sex together. This suggests that extrication risk isn’t distributed evenly and likely depends on a mix of demographic and situational factors.
 
-<!-- Task -3 -->
+We also discovered that the data showed signs of overdispersion — meaning the variation was too large for a standard Poisson model — which confirmed the need for a Negative Binomial approach.
 
-
----
-title: "Task 3: Unsupervised Clustering of Olive Oil Samples"
----
+Ultimately, these insights can help emergency services better plan and prioritize resources. Knowing who is most at risk can inform training, equipment planning, and response strategies — potentially making a real difference in how quickly and effectively teams respond during serious crashes.
 
 
----
 
-## 🔍 Introduction
+# Task 3: Unsupervised Clustering of Olive Oil Samples
 
 Adulteration of olive oil with cheaper oils is a growing concern in the food industry. In this task, we investigate natural variations in the composition of 572 Italian olive oils using unsupervised learning techniques. Our aim is to understand clustering structures and chemical variation before applying fraud detection in the future.
 
 ---
 
-## 📥 Data Loading & Inspection
+# Data Overview
 
 We begin by inspecting the olive oil dataset containing concentrations of 8 fatty acids.
 
@@ -331,9 +358,8 @@ head(data) %>%
   kable_styling(full_width = FALSE)
 ```
 
----
 
-## 📊 Exploratory Data Analysis (EDA)
+# Exploratory Data Analysis (EDA)
 
 The dataset contains only numeric features. We visualize the distributions below:
 
@@ -349,9 +375,17 @@ for (col in numeric_cols) {
 }
 ```
 
+# Correlation Heatmap
+
+```{r}
+library(corrplot)
+cor_matrix <- cor(data[, numeric_cols])
+corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.8)
+```
+The correlation heatmap reveals several strong relationships among the fatty acids in the olive oil dataset. Notably, oleic acid is highly negatively correlated with palmitic acid, suggesting a possible trade-off in their concentrations across samples. Similarly, linoleic acid shows moderate positive correlations with palmitoleic and linolenic acids, indicating potential shared metabolic pathways or regional co-variability. These interdependencies provide early insight into chemical composition patterns, which may influence how clusters form during unsupervised learning. Recognizing such correlations is also important for interpreting principal components and understanding the structure of the data prior to any supervised modelling or fraud detection efforts.
 ---
 
-## ⚖️ Feature Scaling Justification
+# Feature Scaling Justification
 
 K-means clustering and PCA are distance-based methods, hence it's crucial to scale the features. We apply standardization (zero mean, unit variance):
 
@@ -364,7 +398,7 @@ head(scaled_data) %>%
 
 ---
 
-## 📉 Optimal Number of Clusters (Elbow Method)
+# Optimal Number of Clusters (Elbow Method)
 
 The elbow plot suggests that **k = 5** is a reasonable choice for clustering:
 
@@ -374,7 +408,7 @@ tar_read(elbow_plot)
 
 ---
 
-## 📌 K-Means Clustering Results
+#  K-Means Clustering Results
 
 We cluster the scaled data into 5 groups and visualize results below:
 
@@ -393,50 +427,35 @@ kmeans_summary %>%
     Sizes = "Cluster Sizes"
   )
 ```
+The K-Means clustering yielded a total within-cluster sum of squares (WSS) of 1,448.5 and a between-cluster sum of squares (BSS) of 3,119.5, resulting in a total variance (Total SS) of 4,568.0. The separation ratio (BSS / Total SS) of 0.68 indicates a moderate degree of separation among clusters — not perfect, but suggestive of meaningful structure. The cluster sizes are unevenly distributed, ranging from 60 to 217 samples, which could reflect underlying chemical diversity in olive oil composition. These results support the use of 5 clusters as a reasonable balance between model complexity and interpretability.
 
----
-
-## 🔵 PCA-Based Cluster Visualization
+## PCA-Based Cluster Visualization
 
 Principal Component Analysis helps us visualize the clusters in 2D:
 
 ```{r pca-cluster-plot, fig.height=5}
 tar_read(olive_pca_cluster_plot)
 ```
+The PCA-based cluster visualization projects the high-dimensional fatty acid composition of olive oil samples into two principal components (PC1 and PC2), capturing the majority of variance in the dataset. Each dot represents an olive oil sample, colored by its assigned k-means cluster. The plot shows that the five clusters are fairly well-separated in the reduced space, especially clusters 3, 4, and 5. This supports the validity of the clustering structure and suggests underlying compositional differences between groups of oils.
 
 ---
 
-## 📏 Clustering Quality: Silhouette Plot
+## Clustering Quality: Silhouette Plot
 
 The silhouette width measures how well-separated clusters are. Higher values suggest better-defined clusters:
 
 ```{r silhouette-plot, fig.height=5}
-knitr::include_graphics(tar_read(silhouette_plot_path))
+tar_read(silhouette_plot)
 ```
-
+The silhouette plot displays the distribution of silhouette widths for each cluster. Silhouette width measures how similar an object is to its own cluster compared to other clusters — values closer to 1 indicate well-defined clusters. Cluster 4 has the highest median silhouette width, suggesting it is the most compact and well-separated. Cluster 2 shows lower scores with greater spread, indicating potential overlap or less cohesion. Overall, the plot confirms moderate-to-good clustering quality across most groups, justifying the choice of k = 5.
 ---
+# Insights
 
-## 🧠 Interpretation
+Our unsupervised analysis reveals that Italian olive oils exhibit meaningful compositional variation based on fatty acid profiles. The five clusters identified via K-means suggest distinct chemical groupings, supported by moderate silhouette widths and strong PCA separation. Clusters 3, 4, and 5 are particularly well-defined, which may reflect oils from specific geographic regions, cultivars, or processing methods. The correlation structure among fatty acids (e.g., negative relationship between oleic and palmitic acids) further emphasizes biochemical constraints or trade-offs in olive oil composition. These insights lay a strong foundation for future work on authenticity detection, especially when paired with geographic or fraud labels.
 
-- **Cluster separation is moderately strong**: Separation ratio is 0.683.
-- **Silhouette scores** suggest clusters 3 and 4 are well-separated, while cluster 2 may overlap.
-- **PCA plot** confirms distinct separation of clusters in reduced space.
+# Future Directions
 
-This analysis gives us a useful baseline understanding of **natural variability in olive oil composition**, which is essential before tackling adulteration detection.
+While K-means clustering and PCA offer a strong starting point for uncovering latent structure in olive oil composition, there are several opportunities to deepen the analysis. Incorporating known geographic labels could help validate whether the identified clusters correspond to regional production patterns or cultivar differences. Additionally, alternative clustering techniques such as hierarchical clustering or DBSCAN may better capture non-spherical or irregularly shaped groups that K-means might miss. To assess the reliability of the clustering solution, future work could apply resampling or bootstrapping approaches to evaluate cluster stability. Finally, integrating anomaly detection methods could help flag outliers or potentially adulterated samples, contributing directly to food quality assurance and fraud detection efforts.
 
----
-
-## ✅ Summary
-
-| Step | Action |
-|------|--------|
-| Data Cleaning | ✔️ |
-| Scaling Justification | ✔️ Standardization used |
-| Dimension Reduction | ✔️ PCA used for visualisation |
-| Clustering Method | ✔️ K-Means with k = 5 |
-| Cluster Validation | ✔️ Elbow Plot + Silhouette Plot |
-
-
----
-
-**Next Step:** Extend this workflow with supervised classifiers to detect adulteration once labeled data becomes available.
+# Conclusion
+This analysis demonstrated how unsupervised learning can uncover meaningful structure in the chemical composition of Italian olive oil samples. By applying K-means clustering and visualizing the results using PCA, we identified five distinct groups with moderate separation, supported by both within-cluster variance metrics and silhouette analysis. The clusters likely reflect natural variation in fatty acid profiles, possibly tied to regional, varietal, or processing differences. Correlation analysis further revealed strong interdependencies among certain acids, highlighting the complexity of olive oil chemistry. Overall, these insights provide a valuable foundation for future work in authenticity verification, such as detecting adulteration or mislabeling through chemical profiling.
