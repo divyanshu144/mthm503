@@ -1,119 +1,442 @@
 ---
-title: "Standard Report"
-author: "Paul Hewson"
-date: "2025-05-21"
-output: html_document
+title: "Task 1: Pedestrian Crash Severity Classification"
+author: "Divyanshu Charak"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    code_folding: hide
+    df_print: paged
+    highlight: tango
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
 
-## R Markdown
- 
-Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-You need a working pandoc installation on your computer (this should be taken care of if you have an RStudio installation)
-
-
-```{r load_data_and_packages, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
 library(targets)
-tar_load(summary_data)
 library(dplyr)
 library(ggplot2)
-```
-
-## Road casualty data
-
-We can present a visual display of the number of road casualties as follows:
-
-```{r pressure, echo=FALSE}
-summary_data %>%
-  ggplot(aes(x = casualty_severity, y = Casualties, 
-             fill = casualty_severity)) +
-  geom_bar(stat = "identity") + 
-  theme_bw() + 
-  xlab("Severity of Casualty") + 
-  ylab("Number of reported and sub-sampled casualties") + 
-  labs(title = "Number of reported pedestrian road casualties in 2023",
-       subtitle = "All fatalities, 10% of serious and 1% of slight casualties",
-       caption = "Source: STATs19, data.gov.uk")
-```
-
-Do note that there has been a lot of sub-sampling. All fatally injured road pedestrian casualties are included in the data, but 10% of serious and 1% of slight casualties were selected at random.
-
-
-```{r eval=FALSE, message=FALSE}
-library(targets)
-# Read back the two evaluation targets:
-rf <- tar_read(rf_eval)
-svm <- tar_read(svm_eval)
-
-# Print AUCs
-cat("**Random Forest AUC:**", round(rf$auc, 3), "\n\n")
-cat("**SVM (Radial) AUC:**", round(svm$auc, 3), "\n\n")
-
-# Print confusion matrices
-knitr::kable(rf$confusion$table, 
-             caption = "Random Forest Confusion Matrix", 
-             format = "markdown")
-knitr::kable(svm$confusion$table,
-             caption = "SVM (Radial) Confusion Matrix",
-             format = "markdown")
-```
-
-
-That will render nicely-formatted tables of your predicted vs. true class counts and report the AUCs inline.
-
----
-
-## 2. Plot feature‐importance for the Random Forest
-
-Caret’s `varImp()` will extract importances from your `ranger` model:
-
-```markdown
-```{r eval=FALSE, fig.height=6, fig.width=8}
 library(caret)
-# Get variable importance
-vi <- varImp(tar_read(rf_fit))$importance
-vi$variable <- rownames(vi)
+library(pROC)
+library(knitr)
+library(reshape2)
 
-# Plot the top 10
-library(ggplot2)
-ggplot(vi %>% arrange(desc(Overall)) %>% slice(1:10),
-       aes(x = reorder(variable, Overall), y = Overall)) +
+library(kableExtra)
+library(tidyr)
+library(cluster)
+library(tibble)
+library(gt)
+library(ggrepel)
+
+# Load required targets
+tar_load(c(
+  summary_data,
+  rf_eval,
+  svm_eval,
+  rf_fit,
+  train_df,
+  test_df
+))
+
+df_clean <- tar_read(extrication_clean)
+mod_summary <- tar_read(summary_nb_extrication)
+mod_nb <- tar_read(model_nb_extrication)
+
+```
+
+# Introduction
+
+Road traffic collisions involving pedestrians are a significant public safety concern in the UK. Pedestrians, being highly vulnerable road users, often suffer severe injuries in traffic accidents. Accurately predicting crash severity — categorized as Slight, Serious, or Fatal — is crucial for urban planning, emergency response, and achieving the Vision Zero initiative.
+
+In this report, we present a classification approach using two supervised models — Random Forest and Support Vector Machine (SVM) — trained on the UK STATS19 road collision data. This analysis is implemented using a reproducible `{targets}` pipeline, ensuring transparency, reproducibility, and scalability.
+
+# Data Preparation and Feature Engineering
+
+#  2.1 Data Loading and Filtering
+
+The raw casualty, accident, and vehicle tables were joined using `accident_index` as the primary key. We filtered to retain only pedestrian records and constructed several features:
+
+- Demographic: `ped_age`, `ped_sex`
+- Vehicle summary: `avg_driver_age`, `prop_male_driver`, `total_vehicles`
+- Environmental: `weather`, `light`, `urban_rural`, `speed_limit`
+- Temporal: `hour`, `weekend`
+
+ 2.2 Exploratory Analysis
+
+```{r severity-plot, fig.width=6, fig.height=4}
+summary_data %>%
+  mutate(pct = Casualties / sum(Casualties)) %>%
+  ggplot(aes(casualty_severity, pct, fill = casualty_severity)) +
   geom_col() +
-  coord_flip() +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   labs(
-    title = "Top 10 Predictors by Variable Importance (Random Forest)",
-    x = "", y = "Importance"
+    title = "Pedestrian Crash Severity Distribution",
+    x = "Severity",
+    y = "Proportion of Cases"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r severity-hour, fig.width=6, fig.height=4}
+train_df %>%
+  count(hour, severity) %>%
+  group_by(hour) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = factor(hour), y = prop, fill = severity)) +
+  geom_col(position = "stack") +
+  theme_minimal() +
+  labs(
+    x = "Hour of Day",
+    y = "Proportion of Crashes",
+    fill = "Severity",
+    title = "Crash Severity Proportions by Hour"
+  )
+```
+
+2.3 Missing Value Imputation
+
+- Columns with over 50% missing were removed.
+- Numeric columns were imputed using the median.
+- Categorical columns were filled with `Missing` using `fct_explicit_na()`.
+
+3. Feature Selection
+
+Recursive Feature Elimination (RFE) was used to select the most predictive features. A Random Forest model with 5-fold cross-validation was used as the base estimator.
+
+4. Model Training
+
+Two classifiers were trained on the cleaned dataset:
+
+- **Random Forest** using the `ranger` package
+- **Support Vector Machine** with Radial Kernel via `svmRadial`
+
+Both were evaluated using 5-fold cross-validation and tuned via `tuneLength = 5`.
+
+5. Model Evaluation
+
+5.1 Confusion Matrices
+
+```{r rf-cm-plot, fig.width=6, fig.height=4}
+rf_cm_df <- as.data.frame(rf_eval$confusion$table)
+
+ggplot(rf_cm_df, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 5) +
+  scale_fill_gradient(low = "#deebf7", high = "#3182bd") +
+  labs(
+    title = "Random Forest Confusion Matrix",
+    x = "True Class (Reference)",
+    y = "Predicted Class"
   ) +
   theme_minimal()
 ```
 
+The Random Forest model shows strong performance in classifying Slight and Fatal pedestrian crashes, correctly predicting 58 and 52 cases respectively. However, it struggles significantly with the Serious category, misclassifying many of these cases as either Slight (37) or Fatal (24). This indicates difficulty in separating the mid-severity class, likely due to overlapping features with both ends of the severity spectrum.
+
+```{r svm-cm-plot, fig.width=6, fig.height=4}
+svm_cm_df <- as.data.frame(svm_eval$confusion$table)
+
+ggplot(svm_cm_df, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 5) +
+  scale_fill_gradient(low = "#fde0dd", high = "#c51b8a") +
+  labs(
+    title = "SVM (Radial) Confusion Matrix",
+    x = "True Class (Reference)",
+    y = "Predicted Class"
+  ) +
+  theme_minimal()
+```
+
+The SVM (Radial) model offers slightly more balanced results. It improves classification for Serious cases (41 correct) and maintains good accuracy for Slight (61 correct). Although it performs slightly worse than Random Forest for Fatal (48 correct), its overall distribution of predictions suggests it better handles subtle class boundaries, making it a more consistent performer across all three severity levels.
+
+5.2 ROC Curves
+
+```{r roc-curves, fig.width=6, fig.height=4}
+probs_rf <- predict(rf_fit, test_df, type = "prob")
+roc_list <- lapply(levels(test_df$severity), function(cl) {
+  response <- ifelse(test_df$severity == cl, cl, paste0("not_", cl))
+  roc(response, probs_rf[[cl]], levels = c(paste0("not_", cl), cl))
+})
+
+plot(roc_list[[1]], col = "#1b9e77", main = "One-vs-all ROC Curves", legacy.axes = TRUE)
+plot(roc_list[[2]], col = "#d95f02", add = TRUE)
+plot(roc_list[[3]], col = "#7570b3", add = TRUE)
+legend("bottomright", legend = levels(test_df$severity), col = c("#1b9e77", "#d95f02", "#7570b3"), lwd = 2)
+```
+
+5.3 Variable Importance (Random Forest)
+
+```{r varimp-plot, fig.width=6, fig.height=4}
+vi <- varImp(rf_fit)$importance
+vi$variable <- rownames(vi)
+
+vi %>%
+  arrange(desc(Overall)) %>%
+  slice(1:10) %>%
+  ggplot(aes(x = reorder(variable, Overall), y = Overall)) +
+  geom_col(fill = "#66c2a5") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    x = NULL, y = "Importance",
+    title = "Top 10 Predictors by RF Variable Importance"
+  )
+```
+
+6. Conclusion
+
+Both classifiers show promising ability to predict crash severity, with SVM slightly outperforming Random Forest on AUC (0.747 vs 0.724). Confusion matrices reveal moderate sensitivity for Serious and Fatal classes, suggesting room for improvement. Future steps could involve:
+
+- Incorporating external geographic or weather datasets
+- Using ensemble techniques
+- Addressing class imbalance via SMOTE or cost-sensitive learning
+
+
+---
+title: "Task 2: Modeling Extrication Rates"
+
 ---
 
-## 3. Discuss why RF > SVM here
+# 1. Introduction
 
-Below your tables & plot, add a prose section:
+This task analyzes how the age and sex of road traffic casualties relate to the likelihood of **extrication** by fire and rescue services — a process involving the use of cutting tools to remove someone trapped inside a vehicle. Understanding these patterns can aid emergency services in resource allocation and policy planning.
 
-> **Why does Random Forest outperform the SVM?**  
->
-> 1. **Non-linear interactions & high-dimensional splits**  
->    RF can capture complex interactions among features (e.g. time × lighting) via recursive binary splits.  A single radial SVM, by contrast, may struggle to find a kernel hyperplane that cleanly separates three classes in this mixed numeric/categorical space.  
->
-> 2. **Ensemble stability vs. SVM sensitivity**  
->    The bagged‐trees ensemble in RF reduces variance and is robust to outliers and noisy predictors.  SVM tuning (cost/gamma) can be brittle with overlapping classes—hence its much lower recall on “Serious” cases (≈47% vs. ≈87% in RF).  
->
-> 3. **Native multiclass handling**  
->    Ranger handles multiclass natively; the SVM via `svmRadial` in Caret uses one-vs-one behind the scenes, which may introduce inconsistencies when classes overlap.  
->
-> Taken together, these strengths let RF achieve ~0.98 multiclass AUC and ~90% balanced accuracy, compared to only ~0.79 AUC and ~60% overall accuracy for the SVM.
+We model the **extrication rate** using fire brigade data from `fire_rescue_extrication_casualties`, alongside `stats19_by_financial_year` data for normalization. Given evidence of overdispersion in count data, we fit a **Negative Binomial regression** model, including interaction effects between age group and sex.
+
+# 2. Data Summary
+
+The dataset contains 100 group-level observations (by sex and age band) with total extrications and police-reported casualties per financial year. Age bands are categorized into: **0–17**, **18–34**, **35–64**, and **65+**, with an even split across male and female casualties.
+
+The mean extrication rate across all groups is approximately 0.0034, with some variation observed across different demographics.
+
+# 3. Modeling Approach
+
+We used a generalized linear model with a **Negative Binomial family** to model extrications, including an offset for total police-reported collisions. The predictors include:
+
+- Age group of casualty (4 levels)
+- Sex of casualty (Male, Female)
+- Interaction between age and sex
+
+This model helps us estimate **Incidence Rate Ratios (IRR)** — the expected rate of extrication per group, relative to a reference.
+
+# 4. Results
+
+## 4.1 Extrication Rate by Age and Sex
+
+```{r extrication-rate-barplot, echo=FALSE, message=FALSE, warning=FALSE}
+df_clean %>%
+  group_by(age_group, sex_of_casualty) %>%
+  summarise(mean_rate = mean(rate)) %>%
+  ggplot(aes(x = age_group, y = mean_rate, fill = sex_of_casualty)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Average Extrication Rate by Age Group and Sex",
+    x = "Age Group",
+    y = "Mean Extrication Rate",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+
+```
+
+Extrication rates are highest in the 35–64 and 18–34 age groups. Females show slightly higher average rates than males across age groups.
+
+# 4.2 Coefficient Plot: Negative Binomial Model
+
+```{r coef-plot, echo=FALSE, message=FALSE, warning=FALSE}
+mod_summary %>%
+  filter(term != "Baseline (0–17, Female)") %>%
+  ggplot(aes(x = reorder(term, estimate), y = estimate)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  coord_flip() +
+  labs(
+    title = "Effect of Age and Sex on Extrication Rate (IRRs)",
+    x = "Model Term",
+    y = "Incidence Rate Ratio (IRR)"
+  ) +
+  theme_minimal()
+
+```
+
+Compared to the reference group (females aged 0–17):
+	-	Casualties aged 35–64 have nearly 6 times higher rate of extrication.
+	-	Males have slightly lower rates than females, though the main sex effect is not significant.
+	-	Interaction terms indicate modest modification of age effects by sex.
+	
+# 4.3 Predicted vs Actual Rates
+
+```{r actual-vs-predicted, echo=FALSE, message=FALSE, warning=FALSE}
+
+df_clean$predicted <- predict(mod_nb, type = "response")
+
+ggplot(df_clean, aes(x = predicted, y = rate, color = age_group)) +
+  geom_point(size = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Predicted vs. Actual Extrication Rate",
+    x = "Predicted Rate",
+    y = "Observed Rate"
+  ) +
+  theme_minimal()
+
+```
+
+
+The model predictions generally align with observed values. Slight deviations are present but consistent with expected variance.
+
+5. Overdispersion Check
+
+We computed the overdispersion ratio for the Poisson model as 43.55, which is far above the ideal value of 1. This confirms that a standard Poisson model would underestimate standard errors, making the Negative Binomial model a better choice.
+
+6. Conclusion
+
+This analysis shows that casualty age has a significant effect on extrication rates. Middle-aged and older adults are more likely to require cutting-based rescue. Interaction effects suggest some variation by sex, although the overall male/female difference is less pronounced.
+
+
+<!-- Task -3 -->
+
+
+---
+title: "Task 3: Unsupervised Clustering of Olive Oil Samples"
+---
+
 
 ---
 
-Putting it all together in your `Report.Rmd` will give an analytical narrative:  
-- **“Here are the confusion tables & AUCs…”**  
-- **“Here’s which predictors matter most…”**  
-- **“Here’s why RF is the clear winner on these data.”**
+## 🔍 Introduction
 
-That completes Task 1’s final “communicate & interpret” requirement.
+Adulteration of olive oil with cheaper oils is a growing concern in the food industry. In this task, we investigate natural variations in the composition of 572 Italian olive oils using unsupervised learning techniques. Our aim is to understand clustering structures and chemical variation before applying fraud detection in the future.
+
+---
+
+## 📥 Data Loading & Inspection
+
+We begin by inspecting the olive oil dataset containing concentrations of 8 fatty acids.
+
+```{r data-preview}
+data <- tar_read(olive_data_clean)
+head(data) %>%
+  kbl(caption = "Preview of Cleaned Olive Oil Dataset") %>%
+  kable_styling(full_width = FALSE)
+```
+
+---
+
+## 📊 Exploratory Data Analysis (EDA)
+
+The dataset contains only numeric features. We visualize the distributions below:
+
+```{r histograms, echo=FALSE, results='hide', fig.width=6, fig.height=4, fig.show='asis'}
+numeric_cols <- names(data)[sapply(data, is.numeric)]
+for (col in numeric_cols) {
+  print(
+    ggplot(data, aes_string(x = col)) +
+      geom_histogram(bins = 30, fill = "#69b3a2", color = "white") +
+      theme_minimal() +
+      ggtitle(paste("Distribution of", col))
+  )
+}
+```
+
+---
+
+## ⚖️ Feature Scaling Justification
+
+K-means clustering and PCA are distance-based methods, hence it's crucial to scale the features. We apply standardization (zero mean, unit variance):
+
+```{r scaling-preview}
+scaled_data <- tar_read(olive_data_scaled)
+head(scaled_data) %>%
+  kbl(caption = "First Few Rows of Scaled Data") %>%
+  kable_styling(full_width = FALSE)
+```
+
+---
+
+## 📉 Optimal Number of Clusters (Elbow Method)
+
+The elbow plot suggests that **k = 5** is a reasonable choice for clustering:
+
+```{r elbow-plot, fig.height=5}
+tar_read(elbow_plot)
+```
+
+---
+
+## 📌 K-Means Clustering Results
+
+We cluster the scaled data into 5 groups and visualize results below:
+
+```{r kmeans-summary-table}
+kmeans_summary <- tar_read(kmeans_summary)
+
+kmeans_summary %>%
+  gt() %>%
+  tab_header(title = "K-Means Clustering Summary") %>%
+  fmt_number(columns = everything(), decimals = 2) %>%
+  cols_label(
+    Total_WSS = "Total WSS",
+    Between_SS = "Between SS",
+    Total_SS = "Total SS",
+    Ratio = "Separation Ratio",
+    Sizes = "Cluster Sizes"
+  )
+```
+
+---
+
+## 🔵 PCA-Based Cluster Visualization
+
+Principal Component Analysis helps us visualize the clusters in 2D:
+
+```{r pca-cluster-plot, fig.height=5}
+tar_read(olive_pca_cluster_plot)
+```
+
+---
+
+## 📏 Clustering Quality: Silhouette Plot
+
+The silhouette width measures how well-separated clusters are. Higher values suggest better-defined clusters:
+
+```{r silhouette-plot, fig.height=5}
+knitr::include_graphics(tar_read(silhouette_plot_path))
+```
+
+---
+
+## 🧠 Interpretation
+
+- **Cluster separation is moderately strong**: Separation ratio is 0.683.
+- **Silhouette scores** suggest clusters 3 and 4 are well-separated, while cluster 2 may overlap.
+- **PCA plot** confirms distinct separation of clusters in reduced space.
+
+This analysis gives us a useful baseline understanding of **natural variability in olive oil composition**, which is essential before tackling adulteration detection.
+
+---
+
+## ✅ Summary
+
+| Step | Action |
+|------|--------|
+| Data Cleaning | ✔️ |
+| Scaling Justification | ✔️ Standardization used |
+| Dimension Reduction | ✔️ PCA used for visualisation |
+| Clustering Method | ✔️ K-Means with k = 5 |
+| Cluster Validation | ✔️ Elbow Plot + Silhouette Plot |
+
+
+---
+
+**Next Step:** Extend this workflow with supervised classifiers to detect adulteration once labeled data becomes available.

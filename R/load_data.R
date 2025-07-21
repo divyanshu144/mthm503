@@ -47,4 +47,45 @@ read_vehicles <- function() {
   df
 }
 
+# -------------------------- Task -2 -----------------------------------
+load_extrication_data_targets <- function() {
+  tar_read(fire_rescue_extrication_casualties)
+}
+
+load_extrication_data <- function() {
+  con <- get_db_connection()
+  df  <- dbReadTable(con, "fire_rescue_extrication_casualties")
+  dbDisconnect(con)
+  df
+}
+
+load_stats19_by_year_targets <- function() {
+  tar_read(stats19_by_financial_year)
+}
+
+load_stats19_by_year <- function() {
+  con <- get_db_connection()
+  df  <- dbReadTable(con, "stats19_by_financial_year")
+  dbDisconnect(con)
+  df
+}
+
+
+load_extrication_data_from_db <- function() {
+  con <- get_db_connection()
+  df  <- dbReadTable(con, "fire_rescue_extrication_casualties")
+  dbDisconnect(con)
+  df
+}
+
+#----------------------------------------------------------------------------------
+
+#----------------------------- Task-3 ---------------------------------------------
+
+load_olive_oil_from_db <- function() {
+  con <- get_db_connection()
+  df <- dbReadTable(con, "olive_oil")
+  dbDisconnect(con)
+  df
+}
 

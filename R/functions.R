@@ -1,4 +1,5 @@
 library(dplyr)
+library(mgcv)
 utils::globalVariables(c("casualty_severity"))
 
 summarise_data <- function(df) {
@@ -64,3 +65,4 @@ clean_ped_df <- function(ped_df, missing_thresh = 0.5) {
     drop_sparse_cols(threshold = missing_thresh) %>%
     impute_missing()
 }
+

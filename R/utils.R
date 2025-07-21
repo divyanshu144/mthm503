@@ -26,6 +26,6 @@ impute_missing <- function(df) {
   df %>%
     mutate(
       across(where(is.numeric), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)),
-      across(where(is.factor),  ~ fct_explicit_na(., na_level = "Missing"))
-    )
+      across(where(is.factor), ~fct_na_value_to_level(., level = "Missing")) )%>%
+    droplevels()
 }
