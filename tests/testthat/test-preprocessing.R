@@ -1,7 +1,6 @@
-
+source(here::here("R", "functions.R"))
 source(here::here("R", "load_data.R"))
-# source(here::here("R", "impute_missing.R"))
-# source(here::here("R", "clean_ped_df.R"))
+source(here::here("R", "utils.R"))
 
 test_that("mocked data is returned with CI", {
   withr::with_envvar(c(CI = "true"), {
